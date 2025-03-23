@@ -1,77 +1,77 @@
-QBCore = exports['qb-core']:GetCoreObject()
+local QBCore = exports['qb-core']:GetCoreObject()
+local activePassengers = {}
 
-QBCore.Functions.CreateCallback('bus:checkMoney', function(source, cb, price)
-    local Player = QBCore.Functions.GetPlayer(source)
+-- Check if player has enough money for the fare
+QBCore.Functions.CreateCallback('slothy-busStops:server:checkMoney', function(source, cb, fare)
+    local src = source
+    local Player = QBCore.Functions.GetPlayer(src)
     
-    if Player.Functions.GetMoney('cash') >= price then
+    if not Player then return cb(false) end
+    
+    if Player.PlayerData.money['cash'] >= fare then
+        cb(true)
+    elseif Player.PlayerData.money['bank'] >= fare then
         cb(true)
     else
         cb(false)
     end
 end)
 
--- Deduct the fare when the player takes the bus
-RegisterNetEvent('bus:payFare', function(price)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-
-    -- Deduct the fare from the player's money
-    Player.Functions.RemoveMoney('cash', price, "bus-fare")
-end)
-
--- Bus travel attempt
-RegisterNetEvent('bus:attemptTravel')
-AddEventHandler('bus:attemptTravel', function(price, busStop)
+-- Pay the bus fare
+RegisterNetEvent('slothy-busStops:server:payFare', function(fare)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     
-    local cashBalance = Player.PlayerData.money.cash
-    local bankBalance = Player.PlayerData.money.bank
-    local totalBalance = cashBalance + bankBalance
-
-    -- Check if the player has enough money in total (cash + bank)
-    if totalBalance >= price then
-        -- Deduct money from cash first, then from bank if needed
-        if cashBalance >= price then
-            Player.Functions.RemoveMoney('cash', price)
-        else
-            local remainingPrice = price - cashBalance
-            Player.Functions.RemoveMoney('cash', cashBalance)  -- Remove all cash
-            Player.Functions.RemoveMoney('bank', remainingPrice)  -- Remove the rest from the bank
-        end
-
-        -- Notify successful payment
-        TriggerClientEvent('QBCore:Notify', src, 'You paid $'..price..' for the bus ride.', 'success')
-
-        -- Bus travel
-        TriggerClientEvent('bus:startTravel', src, busStop.coords)
+    if not Player then return end
+    
+    if Player.PlayerData.money['cash'] >= fare then
+        Player.Functions.RemoveMoney('cash', fare, "bus-fare")
     else
-        -- Calculate how much more money the player needs
-        local missingAmount = price - totalBalance
-        TriggerClientEvent('QBCore:Notify', src, 'You need $'..missingAmount..' more to pay for the bus fare.', 'error')
+        Player.Functions.RemoveMoney('bank', fare, "bus-fare")
     end
 end)
 
--- Event to handle payment and travel initiation
-RegisterNetEvent('bus:payForTrip')
-AddEventHandler('bus:payForTrip', function(destinationCoords, price, travelTime)
+-- Register a passenger on a bus
+RegisterNetEvent('slothy-busStops:server:registerPassenger', function(tripInfo)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
+    
+    if not Player then return end
+    
+    activePassengers[src] = {
+        name = Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname,
+        fromLocation = tripInfo.fromLocation,
+        fromStop = tripInfo.fromStop,
+        toLocation = tripInfo.toLocation,
+        toDistrict = tripInfo.toDistrict,
+        toStop = tripInfo.toStop,
+        departureTime = tripInfo.departureTime
+    }
+    
+    print('[slothy-busStops] Registered passenger ' .. src)
+end)
 
-    -- Check if player has enough money in bank or cash
-    if Player.Functions.GetMoney('bank') >= price then
-        Player.Functions.RemoveMoney('bank', price)
+-- Unregister a passenger when they arrive
+RegisterNetEvent('slothy-busStops:server:unregisterPassenger', function()
+    local src = source
+    activePassengers[src] = nil
+    print('[slothy-busStops] Unregistered passenger ' .. src)
+end)
 
-        -- Start travel
-        TriggerClientEvent('bus:startTravel', src, destinationCoords, travelTime)
-    elseif Player.Functions.GetMoney('cash') >= price then
-        Player.Functions.RemoveMoney('cash', price)
-
-        -- Start travel
-        TriggerClientEvent('bus:startTravel', src, destinationCoords, travelTime)
-    else
-        -- Doesn't have enough money
-        local missingAmount = price - Player.Functions.GetMoney('bank') - Player.Functions.GetMoney('cash')
-        TriggerClientEvent('QBCore:Notify', src, "Not enough money. You need $" .. missingAmount .. " more.", 'error')
+-- Get list of active passengers
+QBCore.Functions.CreateCallback('slothy-busStops:server:getPassengers', function(source, cb)
+    local passengers = {}
+    
+    for _, passengerInfo in pairs(activePassengers) do
+        table.insert(passengers, passengerInfo)
     end
+    
+    print('[slothy-busStops] Returning ' .. #passengers .. ' passengers')
+    cb(passengers)
+end)
+
+-- Clean up when a player disconnects
+AddEventHandler('playerDropped', function()
+    local src = source
+    activePassengers[src] = nil
 end)
